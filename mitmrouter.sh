@@ -3,7 +3,9 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
-# VARIABLES
+CONFIG_FILE="mitmrouter.conf"
+
+# Default VARIABLES
 BR_IFACE="br0"              # Bridge interface name
 WAN_IFACE="eth0"            # WAN interface (Internet facing)
 LAN_IFACE="eth1"            # LAN interface (wired)
@@ -20,12 +22,82 @@ LAN_DNS_SERVER="1.1.1.1"    # DNS server for DHCP clients
 DNSMASQ_CONF="tmp_dnsmasq.conf" # Temporary dnsmasq configuration file
 HOSTAPD_CONF="tmp_hostapd.conf" # Temporary hostapd configuration file
 
-# Check input arguments; must be either "up" or "down"
-if [[ "$1" != "up" && "$1" != "down" ]] || [[ $# -ne 1 ]]; then
+# Load configuration from the file if it exists
+load_config() {
+    if [[ -f $CONFIG_FILE ]]; then
+        echo "Loading configuration from $CONFIG_FILE..."
+        source $CONFIG_FILE
+    else
+        echo "Configuration file not found. Using default settings."
+    fi
+}
+
+# Save current configuration to the file
+save_config() {
+    echo "Saving current configuration to $CONFIG_FILE..."
+    cat <<EOF > $CONFIG_FILE
+BR_IFACE="$BR_IFACE"
+WAN_IFACE="$WAN_IFACE"
+LAN_IFACE="$LAN_IFACE"
+WIFI_IFACE="$WIFI_IFACE"
+WIFI_SSID="$WIFI_SSID"
+WIFI_PASSWORD="$WIFI_PASSWORD"
+
+LAN_IP="$LAN_IP"
+LAN_SUBNET="$LAN_SUBNET"
+LAN_DHCP_START="$LAN_DHCP_START"
+LAN_DHCP_END="$LAN_DHCP_END"
+LAN_DNS_SERVER="$LAN_DNS_SERVER"
+EOF
+}
+
+# Ask user if they want to change a setting, showing the current value
+ask_change() {
+    local var_name="$1"
+    local current_value="$2"
+    local new_value
+    read -p "Change $var_name [$current_value]? (press enter to keep current): " new_value
+    echo "${new_value:-$current_value}"
+}
+
+# Prompt the user to configure the settings
+prompt_config() {
+    read -p "Do you want to configure the network interfaces? (y/N): " configure_interfaces
+    if [[ "$configure_interfaces" =~ ^[yY]$ ]]; then
+        BR_IFACE=$(ask_change "Bridge Interface (BR_IFACE)" "$BR_IFACE")
+        WAN_IFACE=$(ask_change "WAN Interface (WAN_IFACE)" "$WAN_IFACE")
+        LAN_IFACE=$(ask_change "LAN Interface (LAN_IFACE)" "$LAN_IFACE")
+        WIFI_IFACE=$(ask_change "WiFi Interface (WIFI_IFACE)" "$WIFI_IFACE")
+    fi
+
+    read -p "Do you want to configure IP settings? (y/N): " configure_ips
+    if [[ "$configure_ips" =~ ^[yY]$ ]]; then
+        LAN_IP=$(ask_change "LAN IP" "$LAN_IP")
+        LAN_SUBNET=$(ask_change "LAN Subnet" "$LAN_SUBNET")
+        LAN_DHCP_START=$(ask_change "DHCP Start Range" "$LAN_DHCP_START")
+        LAN_DHCP_END=$(ask_change "DHCP End Range" "$LAN_DHCP_END")
+        LAN_DNS_SERVER=$(ask_change "LAN DNS Server" "$LAN_DNS_SERVER")
+    fi
+
+    save_config
+}
+
+# Check input arguments; must be either "up", "down", or "config"
+if [[ "$1" != "up" && "$1" != "down" && "$1" != "config" ]] || [[ $# -ne 1 ]]; then
     echo "Error: Missing or incorrect argument."
-    echo "Usage: $0 <up|down>"
+    echo "Usage: $0 <up|down|config>"
     exit 1
 fi
+
+# If argument is "config", ask for new settings and save to configuration file
+if [[ "$1" == "config" ]]; then
+    load_config
+    prompt_config
+    exit 0
+fi
+
+# Load config on "up" or "down"
+load_config
 
 # Change to the script's directory
 SCRIPT_RELATIVE_DIR=$(dirname "${BASH_SOURCE[0]}")
@@ -104,7 +176,4 @@ EOF
 
     echo "== Starting dnsmasq"
     sudo dnsmasq -C $DNSMASQ_CONF  # Start dnsmasq with the generated configuration
-
-    echo "== Starting hostapd"
-    sudo hostapd $HOSTAPD_CONF  # Start hostapd with the generated configuration
 fi
